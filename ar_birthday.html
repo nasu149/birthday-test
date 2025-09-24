@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>AR Birthday — Magic Card</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <!-- A-Frame + AR.js -->
+  <script src="https://aframe.io/releases/1.2.0/aframe.min.js"></script>
+  <script src="https://cdn.rawgit.com/jeromeetienne/AR.js/2.2.1/aframe/build/aframe-ar.min.js"></script>
+
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #000; color: #fff; }
+    #instructions {
+      position: absolute; left: 10px; top: 10px; z-index: 10;
+      background: rgba(0,0,0,0.5); padding: 8px 12px; border-radius: 8px;
+    }
+    #startBtn {
+      display:inline-block; margin-top:6px; padding:8px 12px; background:#ff6b81; color:white; border-radius:6px;
+    }
+    #hint { font-size: 0.9em; opacity: 0.9; margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div id="instructions">
+    <div>カードのマーカー（Hiroマーカー）をカメラでかざしてください。</div>
+    <div id="hint">※Hiroマーカーはネットで「hiro marker」検索で印刷できます。カードに貼るか、マーカーの上に写真を置いてください。</div>
+    <div><button id="startBtn">演出を開始する</button></div>
+  </div>
+
+  <!-- assets: 置き換えてください -->
+  <a-assets>
+    <!-- 彼女とのツーショット画像。ar_birthday.html と同じフォルダに couple.jpg を置くか、公開URLに変える -->
+    <img id="photo" src="couple.jpg" crossorigin="anonymous" />
+    <!-- ハート画像（簡易SVGデータURL） -->
+    <img id="heart" src='data:image/svg+xml;utf8,\
+      <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 24 24">\
+      <path fill="%23ff6b81" d="M12 21s-7.5-4.9-10-8.3C.4 9.8 3.1 6 6.2 6 8 6 9.4 7 10 8c.6-1 2-2 3.8-2 3.1 0 5.8 3.8 4.2 6.7C19.5 16.1 12 21 12 21z"/>\
+      </svg>' crossorigin="anonymous" />
+    <!-- 風船（丸） -->
+    <img id="balloon" src='data:image/svg+xml;utf8,\
+      <svg xmlns="http://www.w3.org/2000/svg" width="96" height="128" viewBox="0 0 24 32">\
+      <ellipse cx="12" cy="10" rx="8" ry="10" fill="%23ffd166"/><rect x="11" y="20" width="2" height="6" fill="%23ffd166"/>\
+      </svg>' crossorigin="anonymous" />
+  </a-assets>
+
+  <!-- A-Frame シーン（ARモード） -->
+  <a-scene embedded arjs='sourceType: webcam; debugUIEnabled: false;'>
+    <!-- Hiro マーカーを使う -->
+    <a-marker preset="hiro" id="marker">
+      <!-- 背景となる写真プレーン（写真が浮かぶ）-->
+      <a-plane id="photoPlane" src="#photo" position="0 0 0" rotation="-90 0 0" width="1.2" height="0.8" material="shader: flat; opacity: 0.95"></a-plane>
+
+      <!-- 中央のテキスト（フェードイン） -->
+      <a-entity id="centerText" position="0 0.45 0" rotation="-90 0 0" visible="false">
+        <a-text value="" align="center" color="#fff" width="1.4" baseline="center"></a-text>
+      </a-entity>
+
+      <!-- 花びらエミッタの親 -->
+      <a-entity id="petalEmitter" position="0 0.4 0" rotation="-90 0 0"></a-entity>
+
+      <!-- ハートや風船はJSでスポーン -->
+    </a-marker>
+
+    <!-- カメラ -->
+    <a-entity camera></a-entity>
+  </a-scene>
+
+  <!-- BGM（差し替え可能） -->
+  <audio id="bgm" src="" preload="auto"></audio>
+
+  <script>
+  /****************************************************************
+   * 2分ストーリー制御スクリプト
+   * - マーカー認識で演出を開始（または "開始" ボタン）
+   * - ハート/風船/花びら/テキスト/花火（タップで）を順に出す
+   ****************************************************************/
+  (function(){
+    const marker = document.querySelector('#marker');
+    const centerTextEntity = document.querySelector('#centerText');
+    const centerText = centerTextEntity.querySelector('a-text');
+    const petalEmitter = document.querySelector('#petalEmitter');
+    const startBtn = document.getElementById('startBtn');
+    const bgm = document.getElementById('bgm');
+
+    // カスタマイズ可能なメッセージ（日本語でラブレター調）
+    const messages = [
+      "今日は特別な日だから、魔法をかけるね。",
+      "Happy 32nd Birthday 〜○○〜",
+      "今まで一緒に過ごした時間が、\n僕の宝物です。",
+      "これからも笑い合って、支え合って、\nずっと一緒に歩んでいこう。",
+      "Next Step: Marriage 💍\nこれからも、よろしくね。"
+    ];
+
+    // 演出タイムライン（秒、開始タイミング）
+    const timeline = [
+      { t: 0.0, fn: startSparkles },
+      { t: 0.2, fn: spawnHearts },      // 0:20
+      { t: 0.6, fn: showMessage.bind(null, messages[0]) },
+      { t: 1.2, fn: showMessage.bind(null, messages[1]) },
+      { t: 2.0, fn: spawnBalloons },
+      { t: 3.5, fn: showPetals },
+      { t: 4.5, fn: showMessage.bind(null, messages[2]) },
+      { t: 6.5, fn: showMessage.bind(null, messages[3]) },
+      { t: 9.0, fn: showMessage.bind(null, messages[4]) },
+      { t: 10.5, fn: finalFireworks }   // クライマックス（押してもOK）
+    ];
+
+    // 秒→ミリ秒変換（タイミングはおおよそ）
+    const timelineMs = timeline.map(x => ({ t: Math.round(x.t * 1000), fn: x.fn }));
+
+    let started = false;
+    let timeouts = [];
+
+    // マーカーが見えたら自動で開始（オプション）
+    marker.addEventListener('markerFound', () => {
+      // 自動で開始したい場合はここを有効に（今はボタンでの開始推奨）
+      // if (!started) startShow();
+    });
+
+    startBtn.addEventListener('click', () => {
+      if (!started) startShow();
+    });
+
+    function startShow(){
+      started = true;
+      startBtn.textContent = '演出を再生中…';
+      startBtn.disabled = true;
+
+      // BGMがあれば再生（差し替えて下さい）
+      if (bgm.src) {
+        try { bgm.currentTime = 0; bgm.play(); } catch(e){}
+      }
+
+      // タイムラインを実行
+      timelineMs.forEach(item => {
+        const id = setTimeout(item.fn, item.t);
+        timeouts.push(id);
+      });
+    }
+
+    // クリア（必要なら）
+    function clearShow(){
+      timeouts.forEach(id => clearTimeout(id));
+      timeouts = [];
+      started = false;
+      startBtn.textContent = '演出を開始する';
+      startBtn.disabled = false;
+    }
+
+    /* ---------- 演出パーツ ---------- */
+
+    // 1) キラキラ（簡易: small sprites をゆらゆら）
+    function startSparkles(){
+      for(let i=0;i<20;i++){
+        spawnSparkle( (Math.random()*0.8 - 0.4), (Math.random()*0.4 + 0.1), (Math.random()*0.8-0.4) );
+      }
+    }
+    function spawnSparkle(x,y,z){
+      const el = document.createElement('a-entity');
+      el.setAttribute('geometry', { primitive: 'plane', width: 0.03, height: 0.03 });
+      el.setAttribute('material', { color: '#fff', opacity: 0.9, shader:'flat' });
+      el.setAttribute('position', `${x} ${y} ${z}`);
+      el.setAttribute('rotation', '-90 0 0');
+      el.setAttribute('animation', `property: position; to: ${x} ${y+0.12} ${z}; dur: 800; easing: easeOutQuad`);
+      el.setAttribute('animation__fade', `property: material.opacity; to: 0; dur: 1200; delay: 400`);
+      marker.appendChild(el);
+      setTimeout(()=> el.remove(), 1400);
+    }
+
+    // 2) ハート群
+    function spawnHearts(){
+      for(let i=0;i<12;i++){
+        spawnHeart(Math.random()*0.7 - 0.35, Math.random()*0.15 + 0.25, Math.random()*0.6 - 0.3, 1200 + Math.random()*2000);
+      }
+    }
+    function spawnHeart(x,y,z,dur){
+      const el = document.createElement('a-image');
+      el.setAttribute('src','#heart');
+      el.setAttribute('width', 0.12);
+      el.setAttribute('height', 0.12);
+      el.setAttribute('position', `${x} ${y} ${z}`);
+      el.setAttribute('rotation','-90 0 0');
+      el.setAttribute('material', 'transparent: true; opacity:0');
+      marker.appendChild(el);
+      // fade in & float up
+      el.setAttribute('animation__fadein', `property: material.opacity; to: 1; dur: 300; easing: easeInSine`);
+      el.setAttribute('animation__float', `property: position; to:${x} ${y+0.5} ${z}; dur:${dur}; easing: easeOutQuad`);
+      // fadeout after some time
+      setTimeout(()=> {
+        el.setAttribute('animation__fadeout', `property: material.opacity; to:0; dur:600`);
+        setTimeout(()=> el.remove(), 800);
+      }, dur - 300);
+    }
+
+    // 3) 風船（ゆっくり上昇）
+    function spawnBalloons(){
+      for(let i=0;i<6;i++){
+        spawnBalloon(Math.random()*0.6 - 0.3, 0.15 + Math.random()*0.05, Math.random()*0.6 - 0.3, 3500 + Math.random()*1500);
+      }
+    }
+    function spawnBalloon(x,y,z,dur){
+      const el = document.createElement('a-image');
+      el.setAttribute('src','#balloon');
+      el.setAttribute('width', 0.16);
+      el.setAttribute('height', 0.2);
+      el.setAttribute('position', `${x} ${y} ${z}`);
+      el.setAttribute('rotation','-90 0 0');
+      el.setAttribute('material', 'transparent: true; opacity:0');
+      marker.appendChild(el);
+      el.setAttribute('animation__appear', `property: material.opacity; to:1; dur:400`);
+      el.setAttribute('animation__rise', `property: position; to:${x} ${y+0.9} ${z}; dur:${dur}; easing: easeOutSine`);
+      setTimeout(()=> {
+        el.setAttribute('animation__fade', `property: material.opacity; to:0; dur:800`);
+        setTimeout(()=> el.remove(), 900);
+      }, dur - 200);
+    }
+
+    // 4) 花びら（紙吹雪）
+    function showPetals(){
+      for(let i=0;i<30;i++){
+        spawnPetal(Math.random()*1.0 - 0.5, 0.8 + Math.random()*0.2, Math.random()*1.0 - 0.5, 3000 + Math.random()*1500);
+      }
+    }
+    function spawnPetal(x,y,z,dur){
+      const el = document.createElement('a-entity');
+      el.setAttribute('geometry', { primitive: 'plane', width: 0.04, height:0.04 });
+      el.setAttribute('material', { color: '#ffd1dc', opacity: 1, shader:'flat' });
+      el.setAttribute('position', `${x} ${y} ${z}`);
+      el.setAttribute('rotation', '-90 0 0');
+      marker.appendChild(el);
+      // fall + rotate
+      el.setAttribute('animation__fall', `property: position; to:${x+ (Math.random()-0.5)*0.4} ${y-0.9} ${z+ (Math.random()-0.5)*0.4}; dur:${dur}; easing: linear`);
+      el.setAttribute('animation__rot', `property: rotation; to: ${-90} ${Math.random()*360} ${Math.random()*360}; dur:${dur}; easing: linear`);
+      setTimeout(()=> {
+        el.remove();
+      }, dur+200);
+    }
+
+    // 5) メッセージを表示（フェードイン・自動消去）
+    function showMessage(text){
+      centerTextEntity.setAttribute('visible', true);
+      centerText.setAttribute('value', text);
+      // opacityアニメーションをするために一旦透明にしてから出す
+      centerText.setAttribute('opacity', 0);
+      centerText.setAttribute('animation__fadein', 'property: opacity; to:1; dur:800');
+      // 自動で消える（次メッセージがでるまで）
+      setTimeout(()=> {
+        centerText.setAttribute('animation__fadeout', 'property: opacity; to:0; dur:600');
+      }, 1500); // 表示時間（調整可）
+    }
+
+    // 6) 花火（クライマックス。クリックまたは自動）
+    function finalFireworks(){
+      // spawn multiple bursts
+      for(let i=0;i<8;i++){
+        setTimeout(()=> {
+          spawnFirework((Math.random()*0.8-0.4), 0.6 + Math.random()*0.2, (Math.random()*0.8-0.4));
+        }, i*120);
+      }
+    }
+    function spawnFirework(cx, cy, cz){
+      const particles = [];
+      const count = 28;
+      for(let i=0;i<count;i++){
+        const angle = Math.random()*Math.PI*2;
+        const speed = 0.5 + Math.random()*0.8;
+        const el = document.createElement('a-sphere');
+        el.setAttribute('radius', 0.015);
+        el.setAttribute('material', `color: hsl(${Math.floor(Math.random()*360)},80%,60%); shader: flat;`);
+        el.setAttribute('position', `${cx} ${cy} ${cz}`);
+        marker.appendChild(el);
+        particles.push({ el, angle, speed });
+      }
+      // animate particles by JS tick
+      const start = performance.now();
+      function tick(now){
+        const dt = (now - start) / 600; // 0.. ~
+        particles.forEach((p, idx) => {
+          const dx = Math.cos(p.angle) * p.speed * dt;
+          const dz = Math.sin(p.angle) * p.speed * dt;
+          const dy = (p.speed * dt) - (0.5 * dt*dt); // gravity-ish
+          p.el.setAttribute('position', `${cx + dx} ${cy + dy} ${cz + dz}`);
+          // fade
+          p.el.setAttribute('material', `opacity: ${Math.max(0, 1 - dt*1.2)}; color: ${p.el.getAttribute('material').color}`);
+        });
+        if (dt < 1.4) requestAnimationFrame(tick);
+        else particles.forEach(p => p.el.remove());
+      }
+      requestAnimationFrame(tick);
+    }
+
+    // クリック（タップ）で花火を追加できるように
+    document.body.addEventListener('click', (ev) => {
+      // 画面タップで追加花火
+      finalFireworks();
+    });
+
+    // --- END ---
+  })();
+  </script>
+</body>
+</html>
